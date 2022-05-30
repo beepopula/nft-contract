@@ -4,6 +4,70 @@ use near_contract_standards::fungible_token::core_impl::ext_fungible_token;
 use crate::*;
 
 impl Contract {
+    pub(crate) fn internal_create_series(
+        &mut self, 
+        creator_id: AccountId,
+        token_metadata: TokenMetadata,
+        mint_price: Option<U128>, 
+        ft_token_id: Option<AccountId>,
+        royalty: Option<HashMap<AccountId, u32>>,
+    ) -> TokenSeriesId {
+        
+
+        let token_series_id = format!("{}", (self.token_series_by_id.len() + 1));
+
+        assert!(
+            self.token_series_by_id.get(&token_series_id).is_none(),
+            " duplicate token_series_id"
+        );
+
+        let title = token_metadata.title.clone();
+        assert!(title.is_some(), " token_metadata.title is required");
+        
+
+        let mut total_perpetual = 0;
+        let mut total_accounts = 0;
+        let royalty_res: HashMap<AccountId, u32> = if let Some(royalty) = royalty {
+            for (_ , v) in royalty.iter() {
+                total_perpetual += *v;
+                total_accounts += 1;
+            }
+            royalty
+        } else {
+            HashMap::new()
+        };
+
+        assert!(total_accounts <= 10, " royalty exceeds 10 accounts");
+
+        assert!(
+            total_perpetual <= 9000,
+            "Exceeds maximum royalty -> 9000",
+        );
+
+        let token_series = TokenSeries{
+            metadata: token_metadata.clone(),
+            creator_id: creator_id.clone(),
+            tokens: UnorderedSet::new(
+                StorageKey::TokensBySeriesInner {
+                    token_series: token_series_id.clone(),
+                }
+                .try_to_vec()
+                .unwrap(),
+            ),
+            price: match mint_price {
+                Some(v) => Some(u128::from(v)),
+                None => None
+            },
+            ft_token_id: ft_token_id,
+            is_mintable: true,
+            royalty: royalty_res.clone(),
+        };
+
+        self.token_series_by_id.insert(&token_series_id, &token_series);
+        token_series_id
+    }
+
+
     pub(crate) fn internal_nft_mint_series(
         &mut self, 
         sender_id: AccountId,
@@ -56,7 +120,8 @@ impl Contract {
              token_ids.insert(&token_id);
              tokens_per_owner.insert(&owner_id, &token_ids);
         }
-        self.accounts.insert(&sender_id, &refund);
+        self.accounts.insert(&sender_id, &0);
+        Promise::new(sender_id).transfer(refund);
         token_id
     }
 
@@ -99,18 +164,6 @@ impl Contract {
         }
 
         self.token_series_by_id.insert(&token_series_id, &token_series);
-        env::log_str(
-            &json!({
-                "type": "nft_set_series_price",
-                "params": {
-                    "token_series_id": token_series_id,
-                    "mint price": mint_price,
-                    "ft_token_id": ft_token_id
-                }
-            })
-            .to_string()
-            ,
-        );
         if let Some(price) = mint_price { Some(price) } else { None }
     }
 
